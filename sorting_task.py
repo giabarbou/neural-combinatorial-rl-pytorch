@@ -75,7 +75,7 @@ def create_dataset(
 
     
     if not os.path.isdir(data_dir):
-        os.mkdir(data_dir)
+        os.makedirs(data_dir)
     else:
         if os.path.exists(train_fname) and os.path.exists(val_fname):
             return train_fname, val_fname
