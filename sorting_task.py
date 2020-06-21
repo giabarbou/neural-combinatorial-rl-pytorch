@@ -146,36 +146,8 @@ class SortingDataset(Dataset):
         return self.data_set[idx]
 
 if __name__ == '__main__':
-    if int(sys.argv[1]) == 0:
-        #sample = Variable(torch.Tensor([[3, 2, 1, 4, 5], [2, 3, 5, 1, 4]])) 
-        sample = [Variable(torch.Tensor([3,2])), Variable(torch.Tensor([2,3])), Variable(torch.Tensor([1,5])),
-                Variable(torch.Tensor([4, 1])), Variable(torch.Tensor([5, 4]))]
-        answer = torch.Tensor([3/5., 3/5])
-
-        res = reward(sample)
-
-        print('Expected answer: {}, Actual answer: {}'.format(answer, res.data))
-        """
-        sample = Variable(torch.Tensor([[1, 2, 3, 4, 5], [5, 4, 3, 2, 1]])) 
-        answer = torch.Tensor([1., 1/5])
-
-        res = reward(sample)
-
-        print('Expected answer: {}, Actual answer: {}'.format(answer, res.data))
-        
-        sample = Variable(torch.Tensor([[1, 2, 5, 4, 3], [4, 1, 2, 3, 5]])) 
-        answer = torch.Tensor([3/5., 4/5])
-
-        res = reward(sample)
-
-        print('Expected answer: {}, Actual answer: {}'.format(answer, res.data))
-        """
-    elif int(sys.argv[1]) == 1:
-        create_sorting_dataset(1000, 100, 'data', 10, 123)
-    elif int(sys.argv[1]) == 2:
-
-        sorting_data = SortingDataset('data', 'sorting-size-1000-len-10-train.txt',
-            'sorting-size-100-len-10-val.txt')
-        
-        for i in range(len(sorting_data)):
-            print(sorting_data[i])
+    train_fname, val_fname = create_sorting_dataset(1000, 100, 'data', 10, 123)
+    
+    sorting_data = SortingDataset(train_fname)
+    sorting_data = SortingDataset(val_fname)
+    
