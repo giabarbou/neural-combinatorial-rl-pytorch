@@ -138,7 +138,7 @@ def create_dataset(size,
 
     dataset_file.close()
 
-    return fname
+    return path
 
 
 class CarpoolDataset(Dataset):
