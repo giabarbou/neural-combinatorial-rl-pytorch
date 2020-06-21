@@ -1,8 +1,6 @@
 import torch
 import torch.nn as nn
-import torch.autograd as autograd
 from torch.autograd import Variable
-import torch.nn.functional as F
 import math
 import numpy as np
 
@@ -29,15 +27,15 @@ class Encoder(nn.Module):
         if self.use_cuda:
             enc_init_hx = enc_init_hx.cuda()
 
-        #enc_init_hx.data.uniform_(-(1. / math.sqrt(hidden_dim)),
+        # enc_init_hx.data.uniform_(-(1. / math.sqrt(hidden_dim)),
         #        1. / math.sqrt(hidden_dim))
 
         enc_init_cx = Variable(torch.zeros(hidden_dim), requires_grad=False)
         if self.use_cuda:
             enc_init_cx = enc_init_cx.cuda()
 
-        #enc_init_cx = nn.Parameter(enc_init_cx)
-        #enc_init_cx.data.uniform_(-(1. / math.sqrt(hidden_dim)),
+        # enc_init_cx = nn.Parameter(enc_init_cx)
+        # enc_init_cx.data.uniform_(-(1. / math.sqrt(hidden_dim)),
         #        1. / math.sqrt(hidden_dim))
         return (enc_init_hx, enc_init_cx)
 
@@ -56,7 +54,7 @@ class Attention(nn.Module):
         if use_cuda:
             v = v.cuda()  
         self.v = nn.Parameter(v)
-        self.v.data.uniform_(-(1. / math.sqrt(dim)) , 1. / math.sqrt(dim))
+        self.v.data.uniform_(-(1. / math.sqrt(dim)), 1. / math.sqrt(dim))
         
     def forward(self, query, ref):
         """
@@ -86,17 +84,18 @@ class Attention(nn.Module):
 
 
 class Decoder(nn.Module):
-    def __init__(self, 
-            embedding_dim,
-            hidden_dim,
-            max_length,
-            tanh_exploration,
-            terminating_symbol,
-            use_tanh,
-            decode_type,
-            n_glimpses=1,
-            beam_size=0,
-            use_cuda=True):
+    def __init__(self,
+                 embedding_dim,
+                 hidden_dim,
+                 max_length,
+                 tanh_exploration,
+                 terminating_symbol,
+                 use_tanh,
+                 decode_type,
+                 n_glimpses=1,
+                 beam_size=0,
+                 use_cuda=True,
+                 constraints=[]):
         super(Decoder, self).__init__()
         
         self.embedding_dim = embedding_dim
@@ -107,6 +106,7 @@ class Decoder(nn.Module):
         self.decode_type = decode_type
         self.beam_size = beam_size
         self.use_cuda = use_cuda
+        self.constraints = constraints
 
         self.input_weights = nn.Linear(embedding_dim, 4 * hidden_dim)
         self.hidden_weights = nn.Linear(hidden_dim, 4 * hidden_dim)
@@ -117,19 +117,19 @@ class Decoder(nn.Module):
 
     def apply_mask_to_logits(self, step, logits, mask, prev_idxs):    
         if mask is None:
-            mask = torch.zeros(logits.size()).byte()
+            mask = torch.zeros(logits.size()).bool()
             if self.use_cuda:
                 mask = mask.cuda()
-    
+
         maskk = mask.clone()
 
         # to prevent them from being reselected. 
         # Or, allow re-selection and penalize in the objective function
         if prev_idxs is not None:
             # set most recently selected idx values to 1
-            maskk[[x for x in range(logits.size(0))],
-                    prev_idxs.data] = 1
+            maskk[[x for x in range(logits.size(0))], prev_idxs.data] = 1
             logits[maskk] = -np.inf
+
         return logits, maskk
 
     def forward(self, decoder_input, embedded_inputs, hidden, context):
@@ -149,13 +149,13 @@ class Decoder(nn.Module):
             gates = self.input_weights(x) + self.hidden_weights(hx)
             ingate, forgetgate, cellgate, outgate = gates.chunk(4, 1)
 
-            ingate = F.sigmoid(ingate)
-            forgetgate = F.sigmoid(forgetgate)
-            cellgate = F.tanh(cellgate)
-            outgate = F.sigmoid(outgate)
+            ingate = torch.sigmoid(ingate)
+            forgetgate = torch.sigmoid(forgetgate)
+            cellgate = torch.tanh(cellgate)
+            outgate = torch.sigmoid(outgate)
 
             cy = (forgetgate * cx) + (ingate * cellgate)
-            hy = outgate * F.tanh(cy)  # batch_size x hidden_dim
+            hy = outgate * torch.tanh(cy)  # batch_size x hidden_dim
             
             g_l = hy
             for i in range(self.n_glimpses):
@@ -177,20 +177,39 @@ class Decoder(nn.Module):
         inps = []
         idxs = None
         mask = None
-       
+
         if self.decode_type == "stochastic":
+
+            if self.constraints:
+
+                hx, cx, probs, mask = recurrence(decoder_input, hidden, mask, idxs, 0)
+                idxs = torch.zeros(batch_size, dtype=torch.int64)
+                if self.use_cuda:
+                    idxs = idxs.cuda()
+                idxs[:] = self.constraints[0]
+                selections.append(idxs)
+                outputs.append(probs)
+
+                n_con = len(self.constraints)
+                for i in range(1, n_con):
+                    hx, cx, probs, mask = recurrence(decoder_input, hidden, mask, idxs, i)
+                    idxs = idxs.clone()
+                    idxs[:] = self.constraints[i]
+                    selections.append(idxs)
+                    outputs.append(probs)
+
+                steps = range(n_con, self.max_length)
+
             for i in steps:
                 hx, cx, probs, mask = recurrence(decoder_input, hidden, mask, idxs, i)
                 hidden = (hx, cx)
                 # select the next inputs for the decoder [batch_size x hidden_dim]
-                decoder_input, idxs = self.decode_stochastic(
-                    probs,
-                    embedded_inputs,
-                    selections)
-                inps.append(decoder_input) 
+                decoder_input, idxs = self.decode_stochastic(probs, embedded_inputs, selections)
+                inps.append(decoder_input)
                 # use outs to point to next object
                 outputs.append(probs)
                 selections.append(idxs)
+
             return (outputs, selections), hidden
         
         elif self.decode_type == "beam_search":
@@ -226,7 +245,7 @@ class Decoder(nn.Module):
                     outputs.append(probs.squeeze(0))
                 # Check for indexing
                 selections.append(idxs)
-                 # Should be done decoding
+                # Should be done decoding
                 if len(active) == 0:
                     break
                 decoder_input = Variable(decoder_input.data.repeat(self.beam_size, 1))
@@ -275,8 +294,7 @@ class Decoder(nn.Module):
 
             if not beam[b].advance(probs.data[b]):
                 active += [b]
-        
-        
+
         all_hyp, all_scores = [], []
         for b in range(batch_size):
             scores, ks = beam[b].sort_best()
@@ -309,19 +327,21 @@ class Decoder(nn.Module):
             x = embedded_inputs[idxs.data, [x for x in range(batch_size)], :]
         return x.view(idxs.size(0) * n_best, embedded_inputs.size(2)), idxs, active
 
+
 class PointerNetwork(nn.Module):
     """The pointer network, which is the core seq2seq 
     model"""
     def __init__(self, 
-            embedding_dim,
-            hidden_dim,
-            max_decoding_len,
-            terminating_symbol,
-            n_glimpses,
-            tanh_exploration,
-            use_tanh,
-            beam_size,
-            use_cuda):
+                 embedding_dim,
+                 hidden_dim,
+                 max_decoding_len,
+                 terminating_symbol,
+                 n_glimpses,
+                 tanh_exploration,
+                 use_tanh,
+                 beam_size,
+                 use_cuda,
+                 constraints=[]):
         super(PointerNetwork, self).__init__()
 
         self.encoder = Encoder(
@@ -339,7 +359,8 @@ class PointerNetwork(nn.Module):
                 decode_type="stochastic",
                 n_glimpses=n_glimpses,
                 beam_size=beam_size,
-                use_cuda=use_cuda)
+                use_cuda=use_cuda,
+                constraints=constraints)
 
         # Trainable initial hidden states
         dec_in_0 = torch.FloatTensor(embedding_dim)
@@ -368,10 +389,7 @@ class PointerNetwork(nn.Module):
         # repeat decoder_in_0 across batch
         decoder_input = self.decoder_in_0.unsqueeze(0).repeat(inputs.size(1), 1)
         
-        (pointer_probs, input_idxs), dec_hidden_t = self.decoder(decoder_input,
-                inputs,
-                dec_init_state,
-                enc_h)
+        (pointer_probs, input_idxs), dec_hidden_t = self.decoder(decoder_input, inputs, dec_init_state, enc_h)
 
         return pointer_probs, input_idxs
         
@@ -379,12 +397,12 @@ class PointerNetwork(nn.Module):
 class CriticNetwork(nn.Module):
     """Useful as a baseline in REINFORCE updates"""
     def __init__(self,
-            embedding_dim,
-            hidden_dim,
-            n_process_block_iters,
-            tanh_exploration,
-            use_tanh,
-            use_cuda):
+                 embedding_dim,
+                 hidden_dim,
+                 n_process_block_iters,
+                 tanh_exploration,
+                 use_tanh,
+                 use_cuda):
         super(CriticNetwork, self).__init__()
         
         self.hidden_dim = hidden_dim
@@ -426,33 +444,34 @@ class CriticNetwork(nn.Module):
         out = self.decoder(process_block_state)
         return out
 
+
 class NeuralCombOptRL(nn.Module):
     """
     This module contains the PointerNetwork (actor) and
     CriticNetwork (critic). It requires
     an application-specific reward function
     """
-    def __init__(self, 
-            input_dim,
-            embedding_dim,
-            hidden_dim,
-            max_decoding_len,
-            terminating_symbol,
-            n_glimpses,
-            n_process_block_iters,
-            tanh_exploration,
-            use_tanh,
-            beam_size,
-            objective_fn,
-            is_train,
-            use_cuda):
+    def __init__(self,
+                 input_dim,
+                 embedding_dim,
+                 hidden_dim,
+                 max_decoding_len,
+                 terminating_symbol,
+                 n_glimpses,
+                 n_process_block_iters,
+                 tanh_exploration,
+                 use_tanh,
+                 beam_size,
+                 objective_fn,
+                 is_train,
+                 use_cuda,
+                 constraints=[]):
         super(NeuralCombOptRL, self).__init__()
         self.objective_fn = objective_fn
         self.input_dim = input_dim
         self.is_train = is_train
         self.use_cuda = use_cuda
 
-        
         self.actor_net = PointerNetwork(
                 embedding_dim,
                 hidden_dim,
@@ -462,9 +481,10 @@ class NeuralCombOptRL(nn.Module):
                 tanh_exploration,
                 use_tanh,
                 beam_size,
-                use_cuda)
+                use_cuda,
+                constraints)
         
-        #self.critic_net = CriticNetwork(
+        # self.critic_net = CriticNetwork(
         #        embedding_dim,
         #        hidden_dim,
         #        n_process_block_iters,
@@ -535,11 +555,11 @@ class NeuralCombOptRL(nn.Module):
 
         # get the critic value fn estimates for the baseline
         # [batch_size]
-        #v = self.critic_net(embedded_inputs)
+        # v = self.critic_net(embedded_inputs)
     
         # [batch_size]
         R = self.objective_fn(actions, self.use_cuda)
         
-        #return R, v, probs, actions, action_idxs
+        # return R, v, probs, actions, action_idxs
         return R, probs, actions, action_idxs
 
