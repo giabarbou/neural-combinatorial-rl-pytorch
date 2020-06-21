@@ -180,7 +180,7 @@ def create_dataset(
         val_fname2 = os.path.join(data_dir, 'tsp-{}_test.txt'.format(problem_size))
         
         if not os.path.isdir(data_dir):
-            os.mkdir(data_dir)
+            os.makedirs(data_dir)
         else:
     #         if os.path.exists(train_fname1) and os.path.exists(val_fname1):
     #             return train_fname1, val_fname1
