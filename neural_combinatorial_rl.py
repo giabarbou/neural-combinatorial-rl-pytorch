@@ -106,7 +106,7 @@ class Decoder(nn.Module):
         self.decode_type = decode_type
         self.beam_size = beam_size
         self.use_cuda = use_cuda
-        self.constraints = constraints
+        self.constraints = constraints  # the indices of the points that should not be visited by the decoder
 
         self.input_weights = nn.Linear(embedding_dim, 4 * hidden_dim)
         self.hidden_weights = nn.Linear(hidden_dim, 4 * hidden_dim)
@@ -179,7 +179,8 @@ class Decoder(nn.Module):
         mask = None
 
         if self.decode_type == "stochastic":
-
+            
+            # making sure we visit the constrained points in advance
             if self.constraints:
 
                 hx, cx, probs, mask = recurrence(decoder_input, hidden, mask, idxs, 0)
