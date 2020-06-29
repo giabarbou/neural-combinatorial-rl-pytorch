@@ -180,7 +180,7 @@ class Decoder(nn.Module):
 
         if self.decode_type == "stochastic":
             
-            # making sure we visit the constrained points in advance
+            # visit the constrained points in advance so that they remain in the final solution
             if self.constraints:
 
                 hx, cx, probs, mask = recurrence(decoder_input, hidden, mask, idxs, 0)
